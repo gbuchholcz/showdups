@@ -8,27 +8,31 @@ class RepositoryException(Exception):
         self.message = message
 
 
-def initialize_database(db_file):
+def initialize_connection(db_file=None):
     global _db_connection
+    if _db_connection:
+        raise RepositoryException(
+            'Cannot call initialize_connection twice before calling close_connection')
     if not db_file:
         db_file = ':memory:'
     _db_connection = sqlite3.connect(db_file)
 
 
-def close_database():
+def close_connection(suppress_error=False):
     global _db_connection
-    if not _db_connection:
+    if not _db_connection and not suppress_error:
         raise RepositoryException(
-            'Call initialize_database before accessing the Db')
+            'Call initialize_connection before accessing the Db')
     if _db_connection:
         _db_connection.close()
+        _db_connection = None
 
 
 def create_database():
     global _db_connection
     if not _db_connection:
         raise RepositoryException(
-            'Call initialize_database before accessing the Db')
+            'Call initialize_connection before accessing the Db')
     cursor = _db_connection.cursor()
     cursor.executescript('''
         CREATE TABLE IF NOT EXISTS FileItem (
@@ -53,7 +57,7 @@ def delete_unmatched_file_items():
     global _db_connection
     if not _db_connection:
         raise RepositoryException(
-            'Call initialize_database before accessing the Db')
+            'Call initialize_connection before accessing the Db')
     cursor = _db_connection.cursor()
     cursor.execute('''
         DELETE FROM FileItem
@@ -72,7 +76,7 @@ def insert_scan_item(scan_item_batch):
     global _db_connection
     if not _db_connection:
         raise RepositoryException(
-            'Call initialize_database before accessing the Db')
+            'Call initialize_connection before accessing the Db')
     scan_items = [(f,) for f in scan_item_batch]
     cursor = _db_connection.cursor()
     cursor.executemany(
@@ -85,7 +89,7 @@ def insert_file_item(full_path, filename, path, hash_value, file_size):
     global _db_connection
     if not _db_connection:
         raise RepositoryException(
-            'Call initialize_database before accessing the Db')
+            'Call initialize_connection before accessing the Db')
     cursor = _db_connection.cursor()
     cursor.execute('INSERT INTO FileItem (FullPath, FileName, Path, Hash, SizeInBytes) VALUES(?, ?, ?, ?, ?);',
                    (full_path, filename, path, hash_value, file_size))
@@ -96,7 +100,7 @@ def query_unprocessed_scan_items():
     global _db_connection
     if not _db_connection:
         raise RepositoryException(
-            'Call initialize_database before accessing the Db')
+            'Call initialize_connection before accessing the Db')
     cursor = _db_connection.cursor()
     cursor.execute('''
             SELECT si.FullPath
@@ -112,7 +116,7 @@ def count_unprocessed_scan_items():
     global _db_connection
     if not _db_connection:
         raise RepositoryException(
-            'Call initialize_database before accessing the Db')
+            'Call initialize_connection before accessing the Db')
     cursor = _db_connection.cursor()
     cursor.execute('''
             SELECT COUNT(*)

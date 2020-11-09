@@ -39,7 +39,7 @@ def scan(root_folder, project, overwrite):
         Path.unlink(project)
 
     try:
-        repo.initialize_database(project)
+        repo.initialize_connection(project)
         repo.create_database()
         files_to_scan_count = collect_all_scan_items(root_folder)
         print(f'Total files found in root folder: {files_to_scan_count}')
@@ -50,7 +50,7 @@ def scan(root_folder, project, overwrite):
     except UserAbortException:
         print('\nScan aborted by user')
     finally:
-        repo.close_database()
+        repo.close_connection()
         end = timer()
         ellapsed_time = math.floor(end-start)
         hours = math.floor(ellapsed_time / 3600)
@@ -61,10 +61,10 @@ def scan(root_folder, project, overwrite):
 
 def store_file_hashes():
     global _stop_signal
-    processed_file_count = 0
-    processed_file_size = 0
+    (processed_file_count, processed_file_size) = (0, 0)
     unprocessed_file_count = repo.count_unprocessed_scan_items()
-    with repo.query_unprocessed_scan_items() as files_resultset:
+    try:
+        files_resultset = repo.query_unprocessed_scan_items()
         for file in files_resultset:
             if _stop_signal:
                 raise UserAbortException()
@@ -80,6 +80,9 @@ def store_file_hashes():
             processed_file_size += file_size
             print(
                 f'Processing {processed_file_count:7}/{unprocessed_file_count:7}', end='\r')
+    finally:
+        if files_resultset:
+            files_resultset.close()
     print()
     return {'file-count': processed_file_count, 'total-file-size': processed_file_size}
 
