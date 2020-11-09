@@ -10,8 +10,9 @@ import signal
 import sys
 from timeit import default_timer as timer
 import math
+import repository as repo
 
-stop_signal = False
+_stop_signal = False
 
 
 class UserAbortException(Exception):
@@ -19,8 +20,8 @@ class UserAbortException(Exception):
 
 
 def signal_handler(sig, frame):
-    global stop_signal
-    stop_signal = True
+    global _stop_signal
+    _stop_signal = True
     print('Closing the process...')
 
 
@@ -32,101 +33,77 @@ signal.signal(signal.SIGINT, signal_handler)
 def scan(root_folder, project, overwrite):
     start = timer()
 
-    project_exists = Path.is_file(project)
+    project_exists = project and Path.is_file(project)
 
     if overwrite and project_exists:
         Path.unlink(project)
 
     try:
-        db_connection = create_connection(project)
-        create_database(db_connection)
-        files_to_scan_count = store_files_to_scan_in_db(
-            db_connection, root_folder)
+        repo.initialize_database(project)
+        repo.create_database()
+        files_to_scan_count = collect_all_scan_items(root_folder)
         print(f'Total files found in root folder: {files_to_scan_count}')
-        remove_deleted_fileitems_from_db(db_connection)
-        scan_stats = store_file_hashes(db_connection)
+        repo.delete_unmatched_file_items()
+        scan_stats = store_file_hashes()
         print(
             f'Total files scanned: {scan_stats["file-count"]}; Total file size: {scan_stats["total-file-size"]}')
     except UserAbortException:
         print('\nScan aborted by user')
     finally:
+        repo.close_database()
         end = timer()
         ellapsed_time = math.floor(end-start)
         hours = math.floor(ellapsed_time / 3600)
         mins = math.floor((ellapsed_time - hours * 3600) / 60)
         secs = (ellapsed_time - hours * 3600 - mins * 60)
         print(f'Scan ran for {hours}:{mins}:{secs}')
-        if db_connection:
-            db_connection.close()
 
 
-def store_file_hashes(db_connection):
-    global stop_signal
+def store_file_hashes():
+    global _stop_signal
+    processed_file_count = 0
+    processed_file_size = 0
+    unprocessed_file_count = repo.count_unprocessed_scan_items()
+    with repo.query_unprocessed_scan_items() as files_resultset:
+        for file in files_resultset:
+            if _stop_signal:
+                raise UserAbortException()
+            full_path = file[0]
+            hash_value = hash_file(full_path)
+            file_info = Path(full_path)
+            file_size = file_info.stat().st_size
+            filename = file_info.name
+            path = str(file_info.parent)
+            repo.insert_file_item(full_path, filename,
+                                  path, hash_value, file_size)
+            processed_file_count += 1
+            processed_file_size += file_size
+            print(
+                f'Processing {processed_file_count:7}/{unprocessed_file_count:7}', end='\r')
+    print()
+    return {'file-count': processed_file_count, 'total-file-size': processed_file_size}
 
-    stats = {'file-count': 0, 'total-file-size': 0}
-    files = db_connection.execute('''
-        SELECT si.FullPath
-        FROM ScanItem si
-                LEFT JOIN FileItem fi
-                    ON si.FullPath = fi.FullPath
-        WHERE fi.Id IS NULL
-    ''')
+
+def hash_file(full_path):
     chunk_size = 8192
-    previous_path = ''
-    for file in files:
-        if stop_signal:
-            raise UserAbortException()
-        full_path = file[0]
-        hasher = hashlib.sha256()
-        with open(full_path, "rb") as f:
-            while True:
-                chunk = f.read(chunk_size)
-                if chunk:
-                    hasher.update(chunk)
-                else:
-                    break
-        file_info = Path(full_path)
-        hash_value = base64.b64encode(hasher.digest())
-        file_size = file_info.stat().st_size
-        filename = file_info.name
-        path = str(file_info.parent)
-        db_connection.execute('INSERT INTO FileItem (FullPath, FileName, Path, Hash, SizeInBytes) VALUES(?, ?, ?, ?, ?);',
-                              (full_path, filename, path, hash_value, file_size))
-        if not path == previous_path:
-            print(f'\rProcessing folder: {path}', end='\r')
-            previous_path = path
-        stats['total-file-size'] += file_size
-        stats['file-count'] += 1
-        db_connection.commit()
-    return stats
+    hasher = hashlib.sha256()
+    with open(full_path, "rb") as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if chunk:
+                hasher.update(chunk)
+            else:
+                break
+    return base64.b64encode(hasher.digest())
 
 
-def remove_deleted_fileitems_from_db(db_connection):
-    db_connection.execute('''
-        DELETE FROM FileItem
-        WHERE FullPath IN (
-            SELECT si.FullPath
-            FROM ScanItem si
-                    LEFT JOIN FileItem fi
-                        ON fi.FullPath = si.FullPath
-            WHERE fi.FullPath IS NULL
-        );
-    ''')
-    db_connection.commit()
-
-
-def store_files_to_scan_in_db(db_connection, root_folder):
-    global stop_signal
-
+def collect_all_scan_items(root_folder):
+    global _stop_signal
     file_count = 0
-    for file_batch in chunked(filter(lambda f: Path(f).is_file(), glob.iglob(str(root_folder) + '/**', recursive=True)), 100):
-        if stop_signal:
+    for scan_item_batch in chunked(filter(lambda f: Path(f).is_file(), glob.iglob(str(root_folder) + '/**', recursive=True)), 100):
+        if _stop_signal:
             raise UserAbortException()
-        file_batch_elements = [(f,) for f in file_batch]
-        file_count += len(file_batch_elements)
-        db_connection.executemany(
-            'INSERT INTO ScanItem(FullPath) VALUES(?)', file_batch_elements)
-        db_connection.commit()
+        file_count += repo.insert_scan_item(scan_item_batch)
     return file_count
 
 
@@ -134,34 +111,8 @@ def eval(project):
     pass
 
 
-def create_database(db_connection):
-    db_connection.executescript('''
-        CREATE TABLE IF NOT EXISTS FileItem (
-            Id INTEGER PRIMARY KEY AUTOINCREMENT,
-            FullPath TEXT NOT NULL,
-            FileName TEXT NOT NULL,
-            Path TEXT NOT NULL,
-            Hash TEXT NOT NULL,
-            SizeInBytes INTEGER NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS ScanItem (
-            FullPath TEXT PRIMARY KEY
-        );
-        CREATE INDEX IF NOT EXISTS IX_FileItem_FullPath ON FileItem (FullPath);
-        CREATE INDEX IF NOT EXISTS IX_FileItem_Path ON FileItem (Path);
-        CREATE INDEX IF NOT EXISTS IX_FileItem_Hash ON FileItem (Hash);
-    ''')
-    db_connection.commit()
-
-
-def create_connection(db_file):
-    if not db_file:
-        db_file = ':memory:'
-    return sqlite3.connect(db_file)
-
-
 def check_directory(value):
-    if not Path(value).is_dir():
+    if not value or not Path(value).is_dir():
         raise argparse.ArgumentTypeError("%s is not a folder" % value)
     return Path(value)
 
