@@ -32,12 +32,8 @@ signal.signal(signal.SIGINT, signal_handler)
 
 def scan(root_folder, project, overwrite):
     start = timer()
-
-    project_exists = project and Path.is_file(project)
-
-    if overwrite and project_exists:
+    if overwrite and project and Path.is_file(project):
         Path.unlink(project)
-
     try:
         repo.initialize_connection(project)
         repo.create_database()
@@ -111,7 +107,32 @@ def collect_all_scan_items(root_folder):
 
 
 def eval(project):
-    pass
+    try:
+        repo.initialize_connection(project)
+        actual_hash = ''
+        duplicates = []
+        for duplicate_path in repo.query_duplicate_paths():
+            if duplicate_path[1] == actual_hash:
+                duplicates.append(duplicate_path[0])
+            else:
+                if duplicates:
+                    print(f'Hash: {actual_hash}')
+                    print_array(duplicates)
+                duplicates = [duplicate_path[0]]
+                actual_hash = duplicate_path[1]
+        if duplicates:
+            print(f'Hash: {actual_hash}')
+            print_array(duplicates)
+    except UserAbortException:
+        print('\nScan aborted by user')
+    finally:
+        repo.close_connection()
+
+
+def print_array(arr):
+    print('\t', end='')
+    print(*arr, sep='\n\t')
+    print('', end='\r')
 
 
 def check_directory(value):

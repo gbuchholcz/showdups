@@ -1,4 +1,5 @@
 import sqlite3
+from pathlib import Path
 
 _db_connection = None
 
@@ -122,7 +123,53 @@ def count_unprocessed_scan_items():
             SELECT COUNT(*)
             FROM ScanItem si
                     LEFT JOIN FileItem fi
-                        ON si.FullPath = fi.FullPath            
+                        ON si.FullPath = fi.FullPath
             WHERE fi.Id IS NULL
     ''')
     return cursor.fetchone()[0]
+
+
+def query_duplicate_file_items():
+    global _db_connection
+    if not _db_connection:
+        raise RepositoryException(
+            'Call initialize_connection before accessing the Db')
+    cursor = _db_connection.cursor()
+    cursor.execute('''
+    SELECT fi.FullPath, fi.Path, fi.SizeInBytes, fi.Hash
+    FROM FileItem fi
+        INNER JOIN (
+            SELECT Hash
+            FROM FileItem
+            GROUP BY Hash
+            HAVING COUNT(*) > 1
+        ) hi
+        ON fi.Hash = hi.Hash;
+    ''')
+    return cursor
+
+
+def query_duplicate_paths():
+    global _db_connection
+    if not _db_connection:
+        raise RepositoryException(
+            'Call initialize_connection before accessing the Db')
+    cursor = _db_connection.cursor()
+    cursor.execute('''
+        WITH cte_PathHash(Path, PathHash) AS (
+            SELECT DISTINCT fi.Path, group_concat(fi.Hash, '.') OVER (PARTITION BY fi.Path ORDER BY fi.FileName ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as PathHash
+            FROM FileItem fi
+            ORDER BY fi.Path
+        )
+        SELECT cph1.Path, cph3.PathHash
+        FROM cte_PathHash cph1
+                INNER JOIN (
+                    SELECT cph2.PathHash
+                    FROM cte_PathHash cph2
+                    GROUP BY cph2.PathHash
+                    HAVING COUNT(*) > 1
+                ) AS cph3
+                ON cph1.PathHash = cph3.PathHash
+        ORDER BY cph3.PathHash, cph1.Path;
+    ''')
+    return cursor
