@@ -113,6 +113,17 @@ def query_unprocessed_scan_items():
     return cursor
 
 
+def delete_all_scan_items():
+    global _db_connection
+    if not _db_connection:
+        raise RepositoryException(
+            'Call initialize_connection before accessing the Db')
+    cursor = _db_connection.cursor()
+    cursor.execute('''
+            DELETE FROM ScanItem
+    ''')
+
+
 def count_unprocessed_scan_items():
     global _db_connection
     if not _db_connection:

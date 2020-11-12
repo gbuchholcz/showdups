@@ -42,21 +42,45 @@ def scan(root_folder, project, overwrite):
         repo.delete_unmatched_file_items()
         scan_stats = store_file_hashes()
         print(
-            f'Total files scanned: {scan_stats["file-count"]}; Total file size: {scan_stats["total-file-size"]}')
+            f'Total files scanned: {scan_stats["file-count"]}; Total file size: {bytes_to_size(scan_stats["total-file-size"])}')
     except UserAbortException:
         print('\nScan aborted by user')
     finally:
         repo.close_connection()
         end = timer()
-        ellapsed_time = math.floor(end-start)
-        hours = math.floor(ellapsed_time / 3600)
-        mins = math.floor((ellapsed_time - hours * 3600) / 60)
-        secs = (ellapsed_time - hours * 3600 - mins * 60)
-        print(f'Scan ran for {hours}:{mins}:{secs}')
+        print(f'Scan ran for {secs_to_time(end - start)}')
+    eval(project)
+
+
+def secs_to_time(secs):
+    secs_round_up = math.ceil(secs)
+    hours = math.floor(secs_round_up / 3600)
+    mins = math.floor((secs_round_up - hours * 3600) / 60)
+    secs = (secs_round_up - hours * 3600 - mins * 60)
+    return f'{hours:0>2}:{mins:0>2}:{secs:0>2}'
+
+
+def bytes_to_size(bytes):
+    gb = 1024 * 1024 * 1024
+    mb = 1024 * 1024
+    kb = 1024
+    if bytes > gb:
+        size = bytes / gb
+        unit = 'GB'
+    elif bytes > mb:
+        size = bytes / mb
+        unit = 'MB'
+    elif size > kb:
+        size = bytes / kb
+        unit = 'KB'
+    else:
+        size = bytes
+    return f'{size:>9.2f} {unit}'
 
 
 def store_file_hashes():
     global _stop_signal
+    start = timer()
     (processed_file_count, processed_file_size) = (0, 0)
     unprocessed_file_count = repo.count_unprocessed_scan_items()
     try:
@@ -74,8 +98,11 @@ def store_file_hashes():
                                   path, hash_value, file_size)
             processed_file_count += 1
             processed_file_size += file_size
+            time_elapsed = timer() - start
+            eta = time_elapsed * ((unprocessed_file_count /
+                                   processed_file_count) - 1)
             print(
-                f'Processing {processed_file_count:7}/{unprocessed_file_count:7}', end='\r')
+                f'Processing {processed_file_count:7}/{unprocessed_file_count:7} ETA: {secs_to_time(eta):>9}', end='\r')
     finally:
         if files_resultset:
             files_resultset.close()
@@ -99,6 +126,7 @@ def hash_file(full_path):
 def collect_all_scan_items(root_folder):
     global _stop_signal
     file_count = 0
+    repo.delete_all_scan_items()
     for scan_item_batch in chunked(filter(lambda f: Path(f).is_file(), glob.iglob(str(root_folder) + '/**', recursive=True)), 100):
         if _stop_signal:
             raise UserAbortException()
