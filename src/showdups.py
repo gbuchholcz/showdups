@@ -70,11 +70,11 @@ def bytes_to_size(bytes):
     elif bytes > mb:
         size = bytes / mb
         unit = 'MB'
-    elif size > kb:
+    elif bytes > kb:
         size = bytes / kb
         unit = 'KB'
     else:
-        size = bytes
+        return f'{bytes} bytes'
     return f'{size:>9.2f} {unit}'
 
 
@@ -151,6 +151,9 @@ def eval(project):
         if duplicates:
             print(f'Hash: {actual_hash}')
             print_array(duplicates)
+        max_storage_save = repo.query_maximal_storage_save()
+        print(
+            f'Removing duplicates could save {bytes_to_size(max_storage_save)}')
     except UserAbortException:
         print('\nScan aborted by user')
     finally:

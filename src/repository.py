@@ -160,6 +160,25 @@ def query_duplicate_file_items():
     return cursor
 
 
+def query_maximal_storage_save():
+    global _db_connection
+    if not _db_connection:
+        raise RepositoryException(
+            'Call initialize_connection before accessing the Db')
+    cursor = _db_connection.cursor()
+    cursor.execute('''
+        WITH ct_StorageSave(SaveBytes) AS (
+                    SELECT (COUNT(*) - 1) * SizeInBytes
+                    FROM FileItem
+                    GROUP BY Hash, SizeInBytes
+                    HAVING COUNT(*) > 1
+        )
+        SELECT SUM(SaveBytes)
+        FROM ct_StorageSave;
+    ''')
+    return cursor.fetchone()[0]
+
+
 def query_duplicate_paths():
     global _db_connection
     if not _db_connection:
